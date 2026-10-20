@@ -2,7 +2,7 @@
 
 # Real Time Visualization WebGPU Tutorial
 
-by Lucas Melo, Lukas Herzberger, Patrick Komon
+by Lucas Melo, Lukas Herzberger, Patrick Komon, Stefan Brandmair and Gerald Kimmersdorfer
 
 
 - [Real Time Visualization WebGPU Tutorial](#real-time-visualization-webgpu-tutorial)
@@ -27,13 +27,6 @@ WebGPU-capable browsers:
   - Enable the flags listed here: [https://github.com/gpuweb/gpuweb/wiki/Implementation-Status#chromium-chrome-edge-etc](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status#chromium-chrome-edge-etc)
 - MacOS: Chrome or Safari (macOS Tahoe 26 or later)
 
-### Development
-
-This assumes that you have git and a code editor with a HTTP server.
-
-- Clone this repository (`git clone https://github.com/Welko/rtvis-webgpu-tutorial`)
-- Open the `index.html` with a HTTP server. We recommend [Live Preview](https://marketplace.visualstudio.com/items?itemName=ms-vscode.live-server).
-- Open `src/tutorial.js` in your IDE. All your Javascript code will go there.
 
 ### Resources
 
@@ -43,9 +36,15 @@ This assumes that you have git and a code editor with a HTTP server.
 - [WebGPU Specification](https://www.w3.org/TR/webgpu/)
 - [WGSL Specification](https://www.w3.org/TR/WGSL/)
 
-## Task 0 - Initialize WebGPU
+## Task 0 - Getting ready
 
-Unlike WebGL, WebGPU **does not need a canvas**. It can be used only for its compute capabilites.
+To get started, you need [GIT](https://git-scm.com/), a code editor of your choice and an HTTP Server to proceed. We recommend using [VS Code](https://code.visualstudio.com/) with the [Live Preview](https://marketplace.visualstudio.com/items?itemName=ms-vscode.live-server) extension.
+
+- Clone this repository (`git clone https://github.com/Welko/rtvis-webgpu-tutorial`)
+- Serve `index.html` with a HTTP server.
+- Open `src/tutorial.js` in your IDE. All your Javascript code will go there.
+
+
 
 ```javascript
 async initializeWebGPU() {
@@ -70,6 +69,8 @@ Now open your browser console and look at the message.
 ## Task 1 - Compute Shader Basics
 
 Duration: 10 minutes
+
+Unlike WebGL, WebGPU **does not need a canvas**. It can be used only for its compute capabilites.
 
 We start by creating a very simple shader that adds a constant value to all elements of a list.
 
