@@ -86,7 +86,7 @@ baumkatogdCsvColumnEnum: {
 loadTrees: async (lots=false) => {
     const file = `/data/BAUMKATOGD-${lots?219378:100}.csv`;
     const csv = await LOADER.loadString(LOADER.serverUrl + file);
-    const csvLines = csv.split("\n");
+    const csvLines = csv.split(/\r?\n/);
     
     // Verify if all columns are present
     csvLines[0]
