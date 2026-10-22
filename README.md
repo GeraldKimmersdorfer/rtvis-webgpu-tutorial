@@ -100,9 +100,9 @@ async initializeBuffers() {
 
 This is the data that we want to process on the GPU through a compute shader.
 
-Open the compute shader `src/shaders/add.js`. Note that this is a Javascript file. The shader code is written as a string and stored in the `window` object with the key `add`.
+Open the compute shader `src/shaders/add.wgsl`. Note that this is a Javascript file. The shader code is written as a string and stored in the `window` object with the key `add`.
 
-The programming language of WebGPU shaders is `wgsl`. If you are using Visual Studio Code, we recommend you install the extension [WGSL Literal](https://marketplace.visualstudio.com/items?itemName=ggsimm.wgsl-literal).
+The programming language of WebGPU shaders is `wgsl`. If you are using Visual Studio Code, we recommend you install the extension [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer).
 
 The first thing we'll add here is the **buffer binding**.
 
@@ -117,7 +117,7 @@ Then we add our **compute entry point**.
 @compute
 @workgroup_size(64)
 fn main(@builtin(global_invocation_id) globalId: vec3u) {
-    if (globalId.x >= arrayLength(&data)) {
+    if globalId.x >= arrayLength(&data) {
         return;
     }
     // Our computations will go here :)
@@ -130,7 +130,7 @@ Because a workgroup is fixed-size, it is possible that more threads than data el
 
 ```wgsl
 // globalId.x is our thread ID
-if (globalId.x >= arrayLength(&data)) {
+if globalId.x >= arrayLength(&data) {
     // Current thread is out of bounds. Do nothing.
     return;
 }
@@ -144,7 +144,7 @@ Finally, we can use the thread ID to do something with the data. In this case, w
 @compute
 @workgroup_size(64)
 fn main(@builtin(global_invocation_id) globalId: vec3u) {
-    if (globalId.x >= arrayLength(&data)) {
+    if globalId.x >= arrayLength(&data) {
         return;
     }
     data[globalId.x] += 100u;
@@ -157,7 +157,7 @@ Now that our shader is done, we move back to `tutorial.js` and define the GPU pi
 async initializePipelines() {
     this.pipeline = this.device.createComputePipeline({
         // Use simplistic auto-generation
-        // Bigger applications will manually generate a layout, and share it across muliple shaders
+        // Bigger applications will manually generate a layout, and share it across multiple shaders
         layout: "auto", 
         compute: {
             module: this.device.createShaderModule({
@@ -319,7 +319,7 @@ If we now refresh the page, you'll notice that the first 64 values of our buffer
 
 However, now we do something more interesting than that. We can now use this data to count the number of trees for each district in Vienna. For a large number of trees, it is much faster to do this on the GPU in parallel rather than on the CPU. For that, we write a new shader.
 
-Open `src/shaders/aggregate.js`. 
+Open `src/shaders/aggregate.wgsl`. 
 
 Note that some things are already set up for you. Most importantly, our buffer bindings:
 
@@ -327,7 +327,7 @@ Note that some things are already set up for you. Most importantly, our buffer b
 struct AggregatedValues {
     // Array of 23 atomic unsigned integers (one for each district in Vienna)
     districtNumberOccurrences: array<atomic<u32>, 23>,
-};
+}
 
 // Our storage buffer at binding 0 now is of type TreeInfo (see the TreeInfo struct)
 @group(0) @binding(0) var<storage, read> treeInfo: array<TreeInfo>;
@@ -368,7 +368,7 @@ async initializePipelines() {
         compute: {
             module: this.device.createShaderModule({ 
                 code: SHADERS.aggregate,
-                label: "aggregrate" 
+                label: "aggregate" 
             }),
         }
     });
@@ -481,7 +481,7 @@ For loading large 3D models, it can be beneficial to create a **vertex buffer**,
 
 Since we only render one quad (6 triangles with `triangle-list`), we hard-code the vertex and UV positions in the shader.
 
-Open `src/shaders/image.js`.
+Open `src/shaders/image.wgsl`.
 
 This time, you will find only the definitions of our vertices and UVs.
 
@@ -497,12 +497,12 @@ Next, we define the vertex shader. Other graphics APIs provide global variables 
 ```wgsl
 struct VertexInput {
     @builtin(vertex_index) vertexIndex: u32, // Analogous to gl_VertexID in OpenGL
-};
+}
 
 struct VertexOutput {
-    @builtin(position) position: vec4f, // Built-in vertex position output
-    @location(0) uv: vec2f, // Varying passed to fragment shader
-};
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+}
 
 @vertex
 fn vertex(input: VertexInput) -> VertexOutput {
@@ -518,24 +518,20 @@ fn vertex(input: VertexInput) -> VertexOutput {
 In the fragment shader, we then use our sampler to sample the texture.
 
 ```wgsl
-struct FragmentInput {
-    @location(0) uv: vec2f, // Varying from vertex shader
-};
+// The fragment input comes from the vertex shader's output (VertexOutput)
 
 struct FragmentOutput {
-    @location(0) color: vec4f, // Built-in fragment color output (analogous to gl_FragColor)
-};
+    @location(0) color: vec4f,
+}
 
 @fragment
-fn fragment(input : FragmentInput) -> FragmentOutput {
-    return FragmentOutput(
-        // Sample our texture
-        textureSample(texture, linearSampler, input.uv),
-    );
+fn fragment(input: VertexOutput) -> FragmentOutput {
+    let color = textureSample(texture, linearSampler, input.uv);
+    return FragmentOutput(color);
 }
 ```
 
-Like previously, we must still create a **pipeline** and **bind group**. Additionally, we also need to create a **color attachment**, which describes how the output of our render pass behaves.
+Like previously, we must still create a **pipeline** and **bind group**.
 
 First, for the pipeline:
 
@@ -578,26 +574,6 @@ async initializeBindGroups() {
 }
 ```
 
-And lastly, the color attachment:
-
-```javascript
-async initializeAttachments() {
-    // Set canvas css size
-    const minSide = -100 + Math.min(this.canvas.parentElement.clientWidth, this.canvas.parentElement.clientHeight);
-    this.canvas.style.width = minSide + "px";
-    this.canvas.style.height = minSide + "px";
-
-    // Color attachment to draw to
-    /** @type {GPURenderPassColorAttachment} */
-    this.colorAttachment = {
-        view: null, // Will be set in render(), i.e., every frame
-        loadOp: "clear",
-        clearValue: {r: 0, g: 0, b: 0, a: 0},
-        storeOp: "store"
-    };
-}
-```
-
 There is one last step before rendering: setting up the HTML canvas. That is done analogously to WebGL (where we use `canvas.getContext("webgl)`), followed by a configuration of the context:
 
 ```javascript
@@ -612,15 +588,19 @@ async initializeWebGPU() {
 ```
 
 And finally, we can encode our commands into a buffer and submit it to the GPU!
+The **color attachment** of the render pass describes how the output behaves.
 
 ```javascript
 async render() {
-    this.colorAttachment.view = this.context.getCurrentTexture().createView();
-
     const commandEncoder = this.device.createCommandEncoder();
     {
         const renderPass = commandEncoder.beginRenderPass({
-            colorAttachments: [this.colorAttachment]
+            colorAttachments: [{
+                view: this.context.getCurrentTexture().createView(),
+                loadOp: "clear",
+                clearValue: { r: 0, g: 0, b: 0, a: 0 },
+                storeOp: "store"
+            }]
         });
         renderPass.setPipeline(this.imageRenderPipeline);
         renderPass.setBindGroup(0, this.imageBindGroup);
@@ -650,17 +630,17 @@ Previously, we had loaded the tree information. Now, in addition to that, we als
 async initializeBuffers() {
     ...
     // TreeCoordinates
-    this.gpuTreeCoodinates = this.device.createBuffer({
+    this.gpuTreeCoordinates = this.device.createBuffer({
         size: this.trees.getCoordinatesLatLonBuffer().byteLength,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    this.device.queue.writeBuffer(this.gpuTreeCoodinates, 0, this.trees.getCoordinatesLatLonBuffer());
+    this.device.queue.writeBuffer(this.gpuTreeCoordinates, 0, this.trees.getCoordinatesLatLonBuffer());
 }
 ```
 
 With this data now available, we move on to this task's shaders.
 
-Open `src/shaders/markers.js`.
+Open `src/shaders/markers.wgsl`.
 
 Our vertices and UVs are there again, together with the function `latLonToXY`, that converts latitude and longitude coordinates into XY coordinates in the range [0,1].
 
@@ -670,14 +650,14 @@ As you may have noticed, the function `latLonToXY` uses an object `u` that is no
 struct TreeCoordinates {
     lat: f32,
     lon: f32,
-};
+}
 
 struct TreeInfo {
     treeHeightCategory: u32,
     crownDiameterCategory: u32,
     districtNumber: u32,
     circumferenceAt1mInCm: u32,
-};
+}
 
 struct Uniforms {
     mapWidth: f32,
@@ -689,7 +669,7 @@ struct Uniforms {
     markerSize: f32,
     unused: f32, // Padding
     markerColor: vec4f,
-};
+}
 
 @group(0) @binding(0) var<storage, read> treeCoordinates: array<TreeCoordinates>;
 @group(0) @binding(1) var<storage, read> treeInfo: array<TreeInfo>;
@@ -705,13 +685,13 @@ We will **NOT** use instanced rendering here. Instead, we go even more hardcore 
 ```wgsl
 struct VertexInput {
     @builtin(vertex_index) vertexIndex: u32,
-};
+}
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
     @location(0) uv: vec2f,
     @location(1) color: vec4f,
-};
+}
 
 @vertex
 fn vertex(input: VertexInput) -> VertexOutput {
@@ -748,17 +728,12 @@ fn vertex(input: VertexInput) -> VertexOutput {
 And very little work is left for our fragment shader to do.
 
 ```wgsl
-struct FragmentInput {
-    @location(0) uv: vec2f,
-    @location(1) color: vec4f,
-};
-
 struct FragmentOutput {
     @location(0) color: vec4f,
-};
+}
 
 @fragment
-fn fragment(input : FragmentInput) -> FragmentOutput {
+fn fragment(input: VertexOutput) -> FragmentOutput {
     return FragmentOutput(
         input.color,
     );
@@ -838,7 +813,7 @@ async initializeBindGroups() {
     this.markersBindGroup = this.device.createBindGroup({
         layout: this.markersRenderPipeline.getBindGroupLayout(0),
         entries: [
-            { binding: 0, resource: { buffer: this.gpuTreeCoodinates } },
+            { binding: 0, resource: { buffer: this.gpuTreeCoordinates } },
             { binding: 1, resource: { buffer: this.gpuTreeInfo } },
             { binding: 2, resource: { buffer: this.gpuUniforms } },
         ]
@@ -854,7 +829,12 @@ async render() {
     const commandEncoder = this.device.createCommandEncoder();
     {
         const renderPass = commandEncoder.beginRenderPass({
-            colorAttachments: [this.colorAttachment]
+            colorAttachments: [{
+                view: this.context.getCurrentTexture().createView(),
+                loadOp: "clear",
+                clearValue: { r: 0, g: 0, b: 0, a: 0 },
+                storeOp: "store"
+            }]
         });
 
         // Render map
@@ -961,7 +941,7 @@ For the final task, we will combine compute and render passes to produce a heatm
 
 This will require the compute shader to go through each tree, find out in which cell of our heatmap grid it is contained, and then increment the cell's count by one. When rendering the grid cells, this value must then be mapped to a color. To do that, we must also find out what is the largest value stored among all grid cells.
 
-Open `src/shaders/heatmapCompute.js`.
+Open `src/shaders/heatmapCompute.wgsl`.
 
 You will find the definitions of two functions. We already know `latLonToXY`. The other function, `xyToCellIndex`, converts the XY coordinate of a tree into the index of a cell in our grid.
 
@@ -971,19 +951,19 @@ We start, as per usual, by defining our buffers. We introduce one buffer that st
 struct TreeCoordinates {
     lat: f32,
     lon: f32,
-};
+}
 
 struct TreeInfo {
     treeHeightCategory: u32,
     crownDiameterCategory: u32,
     districtNumber: u32,
     circumferenceAt1mInCm: u32,
-};
+}
 
 struct Cell {
     // Each cell will hold its tree count
     treeCount: atomic<u32>
-};
+}
 
 struct Grid {
     // Largest number of trees stores in a single cell of the grid
@@ -1002,7 +982,7 @@ struct Uniforms {
     markerColor: vec4f,
     gridWidth: f32, // Number of cells on the grid's width
     gridHeight: f32, // Number of cells on the grid's height
-};
+}
 
 @group(0) @binding(0) var<storage, read> treeCoordinates: array<TreeCoordinates>;
 @group(0) @binding(1) var<storage, read> treeInfo: array<TreeInfo>;
@@ -1016,10 +996,9 @@ In this shader, we will introduce **three entry points**. One (called `count`) w
 First, we add the `count` entry point, which is very similar to the `add` shader we wrote in Task 1.
 
 ```wgsl
-@compute
-@workgroup_size(64)
+@compute @workgroup_size(64)
 fn count(@builtin(global_invocation_id) globalId: vec3u) {
-    if (globalId.x >= arrayLength(&treeInfo)) {
+    if globalId.x >= arrayLength(&treeInfo) {
         return;
     }
 
@@ -1041,10 +1020,9 @@ fn count(@builtin(global_invocation_id) globalId: vec3u) {
 Then, we add the `max` entry point.
 
 ```wgsl
-@compute
-@workgroup_size(64)
+@compute @workgroup_size(64)
 fn max(@builtin(global_invocation_id) globalId: vec3u) {
-    if (globalId.x >= arrayLength(&cells)) {
+    if globalId.x >= arrayLength(&cells) {
         return;
     }
 
@@ -1059,15 +1037,14 @@ fn max(@builtin(global_invocation_id) globalId: vec3u) {
 And, finally, the `clear` entry point.
 
 ```wgsl
-@compute
-@workgroup_size(64)
+@compute @workgroup_size(64)
 fn clear(@builtin(global_invocation_id) globalId: vec3u) {
-    if (globalId.x >= arrayLength(&cells)) {
+    if globalId.x >= arrayLength(&cells) {
         return;
     }
 
     // Clear max tree count
-    if (globalId.x == 0) {
+    if globalId.x == 0 {
         atomicStore(&grid.maxTreeCount, 0);
     }
 
@@ -1151,22 +1128,23 @@ With the layouts created, we can then create the **pipelines** and the **bind gr
 ```javascript
 async initializePipelines() {
     ...
-    const pipelineDescriptor = {
+    // Heatmap compute shaders
+    const heatmapShaderModule = this.device.createShaderModule({
+        code: SHADERS.heatmapCompute,
+        label: "heatmapCompute",
+    });
+    this.heatmapComputeClearPipeline = this.device.createComputePipeline({
         layout: this.heatmapComputePipelineLayout,
-        compute: {
-            module: this.device.createShaderModule({ 
-                code: SHADERS.heatmapCompute,
-                label: "heatmapCompute"
-            }),
-            entryPoint: "" // Set below for each pipeline
-        }
-    };
-    pipelineDescriptor.compute.entryPoint = "clear";
-    this.heatmapComputeClearPipeline = this.device.createComputePipeline(pipelineDescriptor);
-    pipelineDescriptor.compute.entryPoint = "count";
-    this.heatmapComputeCountPipeline = this.device.createComputePipeline(pipelineDescriptor);
-    pipelineDescriptor.compute.entryPoint = "max";
-    this.heatmapComputeMaxPipeline = this.device.createComputePipeline(pipelineDescriptor);
+        compute: { module: heatmapShaderModule, entryPoint: "clear" },
+    });
+    this.heatmapComputeCountPipeline = this.device.createComputePipeline({
+        layout: this.heatmapComputePipelineLayout,
+        compute: { module: heatmapShaderModule, entryPoint: "count" },
+    });
+    this.heatmapComputeMaxPipeline = this.device.createComputePipeline({
+        layout: this.heatmapComputePipelineLayout,
+        compute: { module: heatmapShaderModule, entryPoint: "max" },
+    });
 }
 
 async initializeBindGroups() {
@@ -1174,7 +1152,7 @@ async initializeBindGroups() {
     this.heatmapComputeBindGroup = this.device.createBindGroup({
         layout: this.heatmapComputeBindGroupLayout,
         entries: [
-            { binding: 0, resource: { buffer: this.gpuTreeCoodinates} },
+            { binding: 0, resource: { buffer: this.gpuTreeCoordinates} },
             { binding: 1, resource: { buffer: this.gpuTreeInfo } },
             { binding: 2, resource: { buffer: this.gpuGridCells } },
             { binding: 3, resource: { buffer: this.gpuGrid } },
@@ -1226,7 +1204,7 @@ async render() {
 
 Now that we're done with the computation of the heatmap, we move on to displaying it.
 
-Open `src/shaders/heatmapRender.js`;
+Open `src/shaders/heatmapRender.wgsl`;
 
 You will find the familiar vertices and UVs we saw before. That is because we are using the exact same technique we used to render the tree markers, where each grid cell will be rendered as a quad.
 
@@ -1235,7 +1213,7 @@ First, we introduce the buffer bindings.
 ```wgsl
 struct Cell {
     treeCount: u32,
-};
+}
 
 struct Grid {
     maxTreeCount: u32,
@@ -1253,7 +1231,7 @@ struct Uniforms {
     markerColor: vec4f,
     gridWidth: f32,
     gridHeight: f32,
-};
+}
 
 @group(0) @binding(0) var<storage, read> cells: array<Cell>;
 @group(0) @binding(1) var<storage, read> grid: Grid;
@@ -1267,13 +1245,13 @@ Next, we add the vertex shader.
 ```wgsl
 struct VertexInput {
     @builtin(vertex_index) vertexIndex: u32,
-};
+}
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
     @location(0) uv: vec2f,
     @location(1) color: vec4f,
-};
+}
 
 @vertex
 fn vertex(input: VertexInput) -> VertexOutput {
@@ -1307,17 +1285,12 @@ Note that we are assigning an arbitrary color to each grid cell. Later, we will 
 Once again, the fragment shader doesn't do much.
 
 ```wgsl
-struct FragmentInput {
-    @location(0) uv: vec2f,
-    @location(1) color: vec4f,
-};
-
 struct FragmentOutput {
     @location(0) color: vec4f,
-};
+}
 
 @fragment
-fn fragment(input : FragmentInput) -> FragmentOutput {
+fn fragment(input: VertexOutput) -> FragmentOutput {
     return FragmentOutput(
         input.color,
     );
@@ -1379,7 +1352,12 @@ Now we render the heatmap to see if we did everything right so far.
         {
             // Render Pass
             const renderPass = commandEncoder.beginRenderPass({
-                colorAttachments: [this.colorAttachment]
+                colorAttachments: [{
+                    view: this.context.getCurrentTexture().createView(),
+                    loadOp: "clear",
+                    clearValue: { r: 0, g: 0, b: 0, a: 0 },
+                    storeOp: "store"
+                }]
             });
 
             // Render map
@@ -1422,7 +1400,7 @@ async initializeBindGroups() {
 }
 ```
 
-Open `src/shaders/heatmapRender.js`.
+Open `src/shaders/heatmapRender.wgsl`.
 
 Remove the `// Dummy value for now` section and instead calculate a color value based on the tree count.
 
@@ -1440,7 +1418,7 @@ let blendingFactor = f32(count) / f32(maxCount);
 //let blendingFactor = log2(f32(count) + 1) / log2(f32(maxCount) + 1);
 
 var color = mix(color0, color1, blendingFactor);
-if (count == 0) {
+if count == 0 {
     color.a = 0;
 }
 ```
