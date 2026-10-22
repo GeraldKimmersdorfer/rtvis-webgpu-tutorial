@@ -44,7 +44,12 @@ To get started, you need [GIT](https://git-scm.com/), a code editor of your choi
 - Serve `index.html` with a HTTP server.
 - Open `src/tutorial.js` in your IDE. All your Javascript code will go there.
 
+### 0.1 Initialize WebGPU
 
+The first task is to evaluate whether WebGPU is actually supported and store a handle to the respective WebGPU module in `this.gpu`. Finish the function initializeWebGPU such that it assigns `navigator.gpu` to `this.gpu` and throws an error if WebGPU is not supported. It should report via the console if it is indeed supported.
+
+<details>
+<summary>Solution - Initialize WebGPU</summary>
 
 ```javascript
 async initializeWebGPU() {
@@ -59,6 +64,9 @@ async initializeWebGPU() {
     }
 }
 ```
+</details>
+
+---
 
 Now open your browser console and look at the message.
 - Chrome-based - `Ctrl + Shift + J`
@@ -72,9 +80,14 @@ Duration: 10 minutes
 
 Unlike WebGL, WebGPU **does not need a canvas**. It can be used only for its compute capabilites.
 
-We start by creating a very simple shader that adds a constant value to all elements of a list.
+We start by creating a very simple shader that writes the index of each thread into a list of values. In this tutorial, that list will hold one value per district of Vienna.
 
-To get access to your GPU device and communicate with it, get the `device`
+
+### 1.1 Get the GPU device
+Similar to Vulkan, WebGPU uses an `adapter` and a `device` to communicate with the GPU. This can be seen as a handle to the physical GPU in your workstation. In this subtask your goal is to fetch the (default) adapter and the (default) `device` and store it in the `this.device` variable. Add the implementation inside the `initializeWebGPU` function.
+
+<details>
+  <summary>Solution - Getting the GPU device</summary>
 
 ```javascript
 async initializeWebGPU() {
@@ -83,144 +96,211 @@ async initializeWebGPU() {
     this.device = await this.adapter.requestDevice();
 }
 ```
+  </details>
 
-Then, we upload some data to the GPU. For now, a fixed `[1, 2, 3, 4]` array is good enough.
+### 1.2 Create the GPU Buffer
+
+A GPU Buffer can be seen as the equivalent of an array of bytes that needs to be allocated. For this task we need an array of 23 unsigned integers (one per district in Vienna). It needs to have the `STORAGE` usage flag, because we will directly access it in the shader and the `COPY_SRC` as it will be copied to the CPU (via a different Buffer - more on that later). Use `this.device.createBuffer` to create the buffer and store it in the `this.gpuAggregatedValues` variable. Add the implementation to the `initializeBuffers` function.
+
+<details>
+  <summary>Solution - Creating a GPU Buffer</summary>
 
 ```javascript
 async initializeBuffers() {
-    this.data = new Uint32Array([1, 2, 3, 4]);
-    this.buffer = this.device.createBuffer({
-      size: this.data.byteLength,
-      // Storage buffers can be indexed directly on the GPU
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    this.gpuAggregatedValues = this.device.createBuffer({
+      size: 23 * Uint32Array.BYTES_PER_ELEMENT, // 23 unsigned integers (one per district in Vienna)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
     });
-    this.device.queue.writeBuffer(this.buffer, 0, this.data);
 }
 ```
 
-This is the data that we want to process on the GPU through a compute shader.
+</details>
 
-Open the compute shader `src/shaders/add.wgsl`. Note that this is a Javascript file. The shader code is written as a string and stored in the `window` object with the key `add`.
+### 1.3 Writing the GPU shader
 
-The programming language of WebGPU shaders is `wgsl`. If you are using Visual Studio Code, we recommend you install the extension [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer).
+For the sake of this tutorial a shader can be seen as a small script which runs on the GPU which is executed in parallel.
+Open the compute shader [`src/shaders/aggregate.wgsl`](src/shaders/aggregate.wgsl). 
 
-The first thing we'll add here is the **buffer binding**.
+> [!NOTE]
+> 
+> The programming language of WebGPU shaders is `wgsl`. If you are using Visual Studio Code, we recommend you install the extension [wgsl-analyzer](https://marketplace.visualstudio.com/items?itemName=wgsl-analyzer.wgsl-analyzer).
+
+The first thing we'll add here is the **buffer binding** for the buffer we just created. We will bind it in group 0, binding 0 location.
+
+<details>
+  <summary>Solution - Add Buffer Binding</summary>
 
 ```wgsl
 // At binding 0, we have a read-write storage buffer
-@group(0) @binding(0) var<storage, read_write> data: array<u32>; // Array of 32-bit unsigned integers
+@group(0) @binding(0) var<storage, read_write> aggregatedValues: array<u32>; // Array of 32-bit unsigned integers
 ```
 
-Then we add our **compute entry point**.
+</details>
+
+---
+
+Then we add our **compute entry point**. For this we have to define the workgroup size. In WebGPU, a **workgroup** is a fixed-size group of threads that are executed in parallel. We will use a workgroup size of 64 threads as this gives usually a good balance between performance and memory usage.
+
+<details>
+  <summary>Solution - Compute Entry Point</summary>
 
 ```wgsl
 @compute
 @workgroup_size(64)
 fn main(@builtin(global_invocation_id) globalId: vec3u) {
-    if globalId.x >= arrayLength(&data) {
-        return;
-    }
-    // Our computations will go here :)
+    // Our shader code goes here
 }
 ```
+</details>
 
-In WebGPU, a **workgroup** is a fixed-size group of threads. In our entry point, we must specify the size of the workgroup running our code.
+---
 
-Because a workgroup is fixed-size, it is possible that more threads than data elements are being dispatched. To prevent undefined access to our data, we add an **out-of-bounds guard**.
+Because we only have 23 districts, but we run at least 64 threads, we need to guard against out-of-bounds access to the buffer. To prevent undefined access to our data, we add an **out-of-bounds guard** at the beginning of the `main` function.
 
-```wgsl
-// globalId.x is our thread ID
-if globalId.x >= arrayLength(&data) {
-    // Current thread is out of bounds. Do nothing.
-    return;
-}
-```
 
-Finally, we can use the thread ID to do something with the data. In this case, we just add a hard-coded value. The entire shader should then look like this:
+<details>
+  <summary>Solution - Out of Bounds Guard</summary>
 
 ```wgsl
-@group(0) @binding(0) var<storage, read_write> data: array<u32>;
-
 @compute
 @workgroup_size(64)
 fn main(@builtin(global_invocation_id) globalId: vec3u) {
-    if globalId.x >= arrayLength(&data) {
+    // globalId.x is our thread ID
+    if globalId.x >= arrayLength(&aggregatedValues) {
+        // Current thread is out of bounds. Do nothing.
         return;
     }
-    data[globalId.x] += 100u;
 }
 ```
+</details>
 
-Now that our shader is done, we move back to `tutorial.js` and define the GPU pipeline that will run our shader.
+---
+
+Finally, we can write our extremly complex shader logic ;). We simply set the value of the buffer at the current thread ID to the current thread ID.
+
+<details>
+  <summary>Solution - Shader Logic</summary>
+
+```wgsl
+@compute
+@workgroup_size(64)
+fn main(@builtin(global_invocation_id) globalId: vec3u) {
+    ...
+    aggregatedValues[globalId.x] = globalId.x;
+}
+```
+</details>
+
+### 1.4 Initializing the GPU pipeline
+
+Please make sure that you have saved the shader file and switch back to [`tutorial.js`](src/tutorial.js).
+
+A GPU pipeline for a Compute Shader is straight-forward as it basically only contains the information about the entry point and the shader code. For this subtask you have to use `this.device.createComputePipeline` and `this.device.createShaderModule` to create the pipeline we'll later execute. Implement `initializePipelines()` to create the pipeline and store it in `this.aggregatePipeline`.
+
+> [!IMPORTANT]
+> 
+> The shader code is automatically loaded by `src/shaders.js` and made available as `SHADERS.aggregate`.
+
+<details>
+<summary>Solution - Initialize Pipeline</summary>
 
 ```javascript
 async initializePipelines() {
-    this.pipeline = this.device.createComputePipeline({
+    this.aggregatePipeline = this.device.createComputePipeline({
         // Use simplistic auto-generation
         // Bigger applications will manually generate a layout, and share it across multiple shaders
         layout: "auto", 
         compute: {
             module: this.device.createShaderModule({
-                code: SHADERS.add,
-                label: "add"
+                code: SHADERS.aggregate,
+                label: "aggregate"
             }),
         }
     });
 }
 ```
+</details>
 
-Next, we must create a connection between our GPU buffer and a binding in the pipeline. Because we used `layout: "auto"`, the bindings are defined automatically for us. The **pipeline** bindings must match the **shader** bindings.
+### 1.5 Creating the GPU Bind Group
 
-We create this connection via a **bind group** (a group of bindings).
+Next, we must define the connection between our GPU buffer and a binding in the pipeline. If you used `layout: "auto"`, the bindings are defined automatically for us. The **pipeline** bindings must match the **shader** bindings.
+
+We create this connection via a **bind group** (a group of bindings). Use `this.device.createBindGroup` to create the bind group and store it in `this.aggregateBindGroup`. Remember that we used `@group(0) @binding(0)` for our buffer in the shader code.
+
+<details>
+<summary>Solution - Create Bind Group</summary>
 
 ```javascript
 async initializeBindGroups() {
-    this.bindGroup = this.device.createBindGroup({
-        layout: this.pipeline.getBindGroupLayout(0), // group(0)
+    this.aggregateBindGroup = this.device.createBindGroup({
+        layout: this.aggregatePipeline.getBindGroupLayout(0), // group(0)
         entries: [
             {
                 binding: 0, // Matches our shader!
                 resource: {
-                    buffer: this.buffer // Our data!
+                    buffer: this.gpuAggregatedValues // Our district values!
                 }
             }
         ]
     });
 }
 ```
+</details>
 
+### 1.6 Lets compute
 There is one last thing left before executing our pipeline. The pipeline with its bind group is executed through a GPU **command**. Commands in WebGPU are encoded in batch, so that they can all be sent to the GPU at once. That is done via a **command encoder**.
+
+In this Subtask you have to use `this.device.createCommandEncoder` to create the command encoder. Use the `CommandEncoder.beginComputePass` function to creat a compute pass and  make sure to set the pipeline and the bind group we just created. Dispatch one workgroup. (This will start 64 threads, as defined in the shader)
+
+Since this will be done each rendering step your implementation should be inside the `render` function.
+
+<details>
+<summary>Solution - Create Command Encoder and Compute Pass</summary>
 
 ```javascript
 async render() {
     const commandEncoder = this.device.createCommandEncoder();
     {
         const computePass = commandEncoder.beginComputePass();
-        computePass.setPipeline(this.pipeline);
-        computePass.setBindGroup(0, this.bindGroup);
+        computePass.setPipeline(this.aggregatePipeline);
+        computePass.setBindGroup(0, this.aggregateBindGroup);
         computePass.dispatchWorkgroups(1); // Only one workgroup! (64 threads, as defined in the shader)
         computePass.end();
     }
-    const commandBuffer = commandEncoder.finish();
 }
 ```
+</details>
 
-With our command buffer created, we can finally submit it to the GPU, and our shader code will be executed!
+---
+
+Finally use `CommandEncoder.finish` to create the command buffer.
+
+With our command buffer created, we can finally submit it to the GPU, and our shader code will be executed! Use `this.device.queue.submit` to submit the command buffer to the GPU.
+
+<details>
+<summary>Solution - Create Command Encoder and Compute Pass</summary>
 
 ```javascript
 async render() {
     ...
+    const commandBuffer = commandEncoder.finish();
     this.device.queue.submit([commandBuffer]);
 }
 ```
+</details>
+
+### 1.7 Reading the data back to the CPU
 
 The last step for this task is now to read the data back to the CPU, where we can print it to the console.
 
-However, we cannot read directly from our buffer. Our buffer was created with `usage: GPUBufferUsage.STORAGE`. To read from it, it must contain the usage flag `GPUBufferUsage.MAP_READ`. However, this usage flag cannot be used in combination with any other usage flags except for `GPUBufferUsage.COPY_DST`.
+However, we cannot read directly from our buffer. Our buffer was created with `usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC`. To read from it, it must contain the usage flag `GPUBufferUsage.MAP_READ`. However, this usage flag cannot be used in combination with any other usage flags except for `GPUBufferUsage.COPY_DST`.
 
 The solution: We must create a separate buffer to copy our data into.
 
-In this part, we skip the details and encourage you to understand it in more detail on your own at another time.
+In this part, we skip the details and encourage you to understand it in more detail on your own at another time. Feel free to directly use the provided solution or read more about it [here](https://developer.mozilla.org/en-US/docs/Web/API/GPUBuffer#examples).
+
+<details>
+<summary>Solution - CPU Buffer Readback</summary>
 
 ```javascript
 async readBuffer(gpuBuffer, outputArray) {
@@ -251,21 +331,32 @@ async readBuffer(gpuBuffer, outputArray) {
     return outputArray;
 }
 ```
+</details>
 
-**Important!** Our buffer can be copied, because it has the `GPUBufferUsage.COPY_SRC` flag.
+### 1.8 Finally: Lets verify 🎉
 
-The last thing left to do is print our data on the console!
+The last thing left to do is print our data on the console! Please add the `console.log`-line to the end of the `render` function.
+
+> [!IMPORTANT]
+> Be aware that GPU readback is slow and therefore usually implemented as async operation. CPU <-> GPU synchronization should always be kept to a minimum. In this task we simply use `await` to wait for the readback to finish. In performance-critical situations, you may use a ring buffer to avoid blocking the GPU/CPU.
+
+<details>
+<summary>Solution - CPU Buffer Readback</summary>
 
 ```javascript
 async render() {
     ...
-    console.log(await this.readBuffer(this.buffer, new Uint32Array(this.data.length)));
+    console.log(await this.readBuffer(this.gpuAggregatedValues, new Uint32Array(23)));
 }
 ```
+</details>
 
-And we're done!
+---
 
-![Result of the compute shader executed in task 1](images/task1.png)
+You should now see the following output in your console:
+
+
+**Congratulations! We're done!** In the next task, we will actually work with real-life data and replace our useless logic with something meaningful. :D
 
 ## Task 2 - Processing Real Data
 
