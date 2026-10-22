@@ -353,8 +353,9 @@ async render() {
 
 ---
 
-You should now see the following output in your console:
+You should now see the values of the array printed on the console. Each value should be its own index:
 
+<img src="images/task1.jpg" />
 
 **Congratulations! We're done!** In the next task, we will actually work with real-life data and replace our useless logic with something meaningful. :D
 
@@ -376,10 +377,24 @@ We use this to load information per tree in a single list, in the format
 ]
 ```
 
-and write it to a GPU buffer. We may completely replace the old data and buffers with the new ones.
+In the previous task we already created the buffer for the aggregated values and the compute pipeline that writes into it. In this task we only add what is needed to actually count the trees per district: a buffer for the tree info, the corresponding shader bindings and the aggregation logic.
+
+### 2.1 Create the tree info buffer
+
+In this subtask you'll need to load the tree data using the provided `LOADER.loadTrees()` function. Afterwards you need to create a new GPU buffer which is large enough to store the tree data (use `this.trees.getInfoBuffer().byteLength`). Store the buffer in the `this.gpuTreeInfo` variable and upload the data using `this.device.queue.writeBuffer`.
+
+> [!IMPORTANT]
+> Besides the `STORAGE` and `COPY_SRC` flags it also needs the `COPY_DST` flag, because we now upload data into it from the CPU.
+
+The necessary implementation goes to the bottom of the `initializeBuffers` function.
+
+<details>
+<summary>Solution - Create Tree Info Buffer</summary>
 
 ```javascript
 async initializeBuffers() {
+    ...
+
     this.trees = await LOADER.loadTrees(); // Load 100 trees
 
     // TreeInfo
@@ -390,29 +405,40 @@ async initializeBuffers() {
     this.device.queue.writeBuffer(this.gpuTreeInfo, 0, this.trees.getInfoBuffer());
 }
 ```
+</details>
 
-Now we have replaced our `data` array with `trees.getInfoBuffer()` and renamed our `buffer` to `gpuTreeInfo`. This change also needs to be reflected in our `initializeBindGroups`and `render` functions:
+### 2.2 Writing the GPU shader
 
-```javascript
-async initializeBindGroups() {
-    ...
-                    buffer: this.gpuTreeInfo // Our new tree data!
-    ...
+Open the compute shader [`src/shaders/aggregate.wgsl`](src/shaders/aggregate.wgsl).
+
+The first thing we'll add here is the `TreeInfo` struct, which has to match the layout of the data we just uploaded, and the **buffer binding** for it. We will bind the tree info in `@group(0) @binding(1)`.
+
+<details>
+<summary>Solution - Tree Info Struct and Binding</summary>
+
+```wgsl
+struct TreeInfo {
+    treeHeightCategory: u32,
+    crownDiameterCategory: u32,
+    districtNumber: u32,
+    circumferenceAt1mInCm: u32,
 }
+
 ...
-async render() {
-    ...
-    console.log(await this.readBuffer(this.gpuTreeInfo, new Uint32Array(this.trees.getInfoBuffer().length)));
-}
+
+// Second storage buffer with the loaded tree info
+@group(0) @binding(1) var<storage, read> treeInfo: array<TreeInfo>;
+
+...
 ```
+</details>
 
-If we now refresh the page, you'll notice that the first 64 values of our buffer are at least 100, as expected.
+---
 
-However, now we do something more interesting than that. We can now use this data to count the number of trees for each district in Vienna. For a large number of trees, it is much faster to do this on the GPU in parallel rather than on the CPU. For that, we write a new shader.
+Multiple trees can be located in the same district, which means that multiple threads may increment the same entry of our buffer at the same time. To avoid race conditions, we need to turn our aggregated values into an array of atomics `array<atomic<u32>, 23>`. Update the binding at `@group(0) @binding(0)` accordingly.
 
-Open `src/shaders/aggregate.wgsl`. 
-
-Note that some things are already set up for you. Most importantly, our buffer bindings:
+<details>
+<summary>Solution - Atomic Aggregated Values</summary>
 
 ```wgsl
 struct AggregatedValues {
@@ -420,66 +446,60 @@ struct AggregatedValues {
     districtNumberOccurrences: array<atomic<u32>, 23>,
 }
 
-// Our storage buffer at binding 0 now is of type TreeInfo (see the TreeInfo struct)
-@group(0) @binding(0) var<storage, read> treeInfo: array<TreeInfo>;
-
-// A second storage buffer is added, where our (atomic) counts are stored
-// We need to create a new buffer for this!
-@group(0) @binding(1) var<storage, read_write> aggregatedValues: AggregatedValues;
+@group(0) @binding(0) var<storage, read_write> aggregatedValues: AggregatedValues;
 ```
+</details>
 
-The only thing left to add is accessing the tree info for each tree and incrementing the count of its district.
+---
+
+Now the only thing left to add is accessing the tree info for each tree and incrementing the count of its district. Since we now run one thread per tree, we also have to adjust the out-of-bounds guard to check the number of trees instead of the number of districts. For the atomic increment we can use the `atomicAdd` function.
+
+<details>
+<summary>Solution - Count the Trees</summary>
 
 ```wgsl
-let treeInfo: TreeInfo = treeInfo[globalId.x];
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) globalId: vec3u) {
+    if globalId.x >= arrayLength(&treeInfo) {
+        return;
+    }
 
-// Increment one to district number
-let districtNumber = treeInfo.districtNumber;
-atomicAdd(&aggregatedValues.districtNumberOccurrences[districtNumber - 1], 1);
-```
+    let treeInfo: TreeInfo = treeInfo[globalId.x];
 
-Back to Javascript, creating the buffer that we will use for the aggregated values is simple, since we don't need to initialize its data (it is initialized with zeros).
-
-```javascript
-async initializeBuffers() {
-    ...
-    this.gpuAggregatedValues = this.device.createBuffer({
-        size: 23 * Uint32Array.BYTES_PER_ELEMENT, // 23 unsigned integers (one per district in Vienna)
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
-    });
+    // Increment one to district number
+    let districtNumber = treeInfo.districtNumber;
+    atomicAdd(&aggregatedValues.districtNumberOccurrences[districtNumber - 1], 1);
 }
 ```
+</details>
 
-With a new **shader** and a new **buffer**, we must also create a new **pipeline** and a new **bind group**.
+### 2.3 Update the GPU Bind Group
+
+The pipeline itself does not change, because we still use the same shader and entry point. However, the shader now uses a second buffer, so we must update `this.aggregateBindGroup` to also bind the tree info buffer at binding 1. Use `this.device.createBindGroup` in the `initializeBindGroups` function.
+
+<details>
+<summary>Solution - Update Bind Group</summary>
 
 ```javascript
-async initializePipelines() {
-    this.aggregatePipeline = this.device.createComputePipeline({
-        layout: "auto",
-        compute: {
-            module: this.device.createShaderModule({ 
-                code: SHADERS.aggregate,
-                label: "aggregate" 
-            }),
-        }
-    });
-}
-
 async initializeBindGroups() {
     this.aggregateBindGroup = this.device.createBindGroup({
         layout: this.aggregatePipeline.getBindGroupLayout(0),
         entries: [
-            { binding: 0, resource: { buffer: this.gpuTreeInfo } },
+            { binding: 0, resource: { buffer: this.gpuAggregatedValues } },
             // Now we have a second buffer on binding 1!
-            { binding: 1,  resource: { buffer: this.gpuAggregatedValues } }
+            { binding: 1,  resource: { buffer: this.gpuTreeInfo } }
         ]
     });
 }
 ```
+</details>
 
-Almost done. Now we adjust the number of workgroups we're dispatching. Instead of just one, we calculate it based on how many trees we have.
+### 2.4 Dispatch the workgroups
 
-Don't forget to also rename the pipeline and bind group we're using.
+Almost done. Now we adjust the number of workgroups we're dispatching. Instead of just one, we calculate it based on how many trees we have. **Don't forget that we spawn 64 threads per workgroup.**
+
+<details>
+<summary>Solution - Dispatch the Workgroups</summary>
 
 ```javascript
 async render() {
@@ -493,19 +513,30 @@ async render() {
     ...
 }
 ```
+</details>
 
-Finally, we can now print the contents of the aggregates buffer.
+---
+
+If you've done everything correctly up to this point, the result in the console should now look like this (you might need to refresh the page):
+
+![Result of the aggregation performed in task 2](images/task2_1.png)
+
+### 2.6 Lets visualize it
+First lets go big by now loading the whole dataset with its ~200.000 trees. For this you only need to add a `true` to the parameter set of the `loadTrees`-function in `initializeBuffers`.
+
+<details>
+<summary>Solution - Load the whole dataset</summary>
 
 ```javascript
-async render() {
-    ...
-    console.log(await this.readBuffer(this.gpuAggregatedValues, new Uint32Array(23)));
-}
+...
+this.trees = await LOADER.loadTrees(false); // Load trees, false means load all trees
+...
 ```
+</details>
 
-You should now see displayed on the console the number of trees counted per district (note that we start at index 0). In the image below, district 9 has 30 trees, district 10 has 0, district 11 has 7, etc.
+---
 
-![Result of the aggregation performed in task 2](images/task2.png)
+Now we can see that the result is not very useful. We have a lot of trees, but we don't know where they are. So let's render them!
 
 ## Task 3 - Render an Image
 
