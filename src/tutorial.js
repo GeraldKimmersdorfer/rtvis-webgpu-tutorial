@@ -1,5 +1,6 @@
 import { LOADER } from "../src/loader.js";
 import { SHADERS } from "./shaders.js";
+import { visualize_district_info } from "../lib/vienna-vis.js";
 
 export class Tutorial {
 

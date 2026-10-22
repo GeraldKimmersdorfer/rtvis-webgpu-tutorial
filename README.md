@@ -522,7 +522,7 @@ If you've done everything correctly up to this point, the result in the console 
 ![Result of the aggregation performed in task 2](images/task2_1.png)
 
 ### 2.6 Lets visualize it
-First lets go big by now loading the whole dataset with its ~200.000 trees. For this you only need to add a `true` to the parameter set of the `loadTrees`-function in `initializeBuffers`.
+First: Lets go big by now loading the whole dataset with its ~200.000 trees. For this you only need to add a `true` to the parameter set of the `loadTrees`-function in `initializeBuffers`.
 
 <details>
 <summary>Solution - Load the whole dataset</summary>
@@ -536,7 +536,36 @@ this.trees = await LOADER.loadTrees(false); // Load trees, false means load all 
 
 ---
 
-Now we can see that the result is not very useful. We have a lot of trees, but we don't know where they are. So let's render them!
+The web allows us to visualize certain data very efficiently. Especially an Aggregation like this with only 23 values can be viewed inside the DOM without any issues. We provide a simple svg-based visualization to show the districts and their tree counts. Just use the provided `visualize_district_info` function which takes the aggregated values as input. You can replace the `console.log` in the `render` function with it.
+
+<details>
+<summary>Solution - Visualize the aggregated values</summary>
+
+```javascript
+async render() {
+    ...
+    visualize_district_info(await this.readBuffer(this.gpuAggregatedValues, new Uint32Array(23)));
+}
+```
+</details>
+
+---
+
+If you've done everything correctly, you should now see a simplified shape of Vienna with the different districts colored by their tree count in a green sequential scale with 6 bins.
+
+![Result of the aggregation performed in task 2](images/task2_2.jpg)
+
+
+> [!IMPORTANT]
+> **This is an important Take-Away!** Even though WebGPU also has rendering capabilities - in a lot of cases we are better off to only do the data processing on the GPU and visualize the result without WebGPU.
+>
+> There are tons of frameworks for data visualization (e.g. [D3.js](https://d3js.org/), [Chart.js](https://www.chartjs.org/), [Plotly.js](https://plotly.com/javascript/), [Apache ECharts](https://echarts.apache.org/), [Highcharts](https://www.highcharts.com/), [Recharts](https://recharts.org/), [Vega-Lite](https://vega.github.io/vega-lite/), ...). For geographic data there are even more specialized frameworks like [Leaflet](https://leafletjs.com/), [Mapbox GL JS](https://docs.mapbox.com/mapbox-gl-js/api/), [MapLibre GL JS](https://maplibre.org/maplibre-gl-js/docs/), [OpenLayers](https://openlayers.org/), [deck.gl](https://deck.gl/), [CesiumJS](https://cesium.com/platform/cesiumjs/), ...
+>
+> Don't reinvent the wheel ;)
+
+But lets assume we want to visualize the trees themselves. Having ~200k DOM elements may not be a good idea. Even though it might still be possible you will run into performance issues eventually. Instead we will render the trees on a canvas using WebGPU. 
+
+So lets dive even deeper, learn about Rendering Pipelines and how to visualize 200.000 data points (or even much much more) with ease.
 
 ## Task 3 - Render an Image
 
