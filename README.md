@@ -842,6 +842,13 @@ Finally, in this task, we will get to render our tree data.
 
 Previously, we had loaded the tree information. Now, in addition to that, we also load the coordinates of the trees.
 
+### 4.1 Create the tree coordinates buffer
+
+In this subtask you have to create a buffer large enough for the coordinates (use `this.trees.getCoordinatesLatLonBuffer().byteLength`), store it in `this.gpuTreeCoordinates` and upload the data with `this.device.queue.writeBuffer`. Besides `STORAGE` it needs the `COPY_DST` usage flag, because we upload data into it from the CPU. Add the implementation to the `initializeBuffers` function.
+
+<details>
+<summary>Solution - Create the tree coordinates buffer</summary>
+
 ```javascript
 async initializeBuffers() {
     ...
@@ -853,14 +860,17 @@ async initializeBuffers() {
     this.device.queue.writeBuffer(this.gpuTreeCoordinates, 0, this.trees.getCoordinatesLatLonBuffer());
 }
 ```
+</details>
 
 With this data now available, we move on to this task's shaders.
 
+### 4.2 Write the marker shaders
+
 Open `src/shaders/markers.wgsl`.
 
-Our vertices and UVs are there again, together with the function `latLonToXY`, that converts latitude and longitude coordinates into XY coordinates in the range [0,1].
+Our vertices and UVs are there again, together with the function `latLonToXY`, that converts latitude and longitude coordinates into XY coordinates in the range [0,1]. In addition, `u32ToHashColor` is already provided. It hashes a district number into a color.
 
-As you may have noticed, the function `latLonToXY` uses an object `u` that is not defined anywhere. This is our uniforms. Uniforms are not passed individually to a shader, but through an **uniform buffer**. We will define it now, together with our two other buffers.
+As you may have noticed, the function `latLonToXY` uses an object `u` that is not defined anywhere. This is our uniforms. Uniforms are not passed individually to a shader, but through an **uniform buffer**. We will define it now, together with our two other buffers. The structs are already given:
 
 ```wgsl
 struct TreeCoordinates {
@@ -886,17 +896,27 @@ struct Uniforms {
     unused: f32, // Padding
     markerColor: vec4f,
 }
+```
 
+In this section you have to bind the three buffers. Bind the tree coordinates at `@group(0) @binding(0)`, the tree info at `(1)` and the uniforms at `(2)`.
+
+<details>
+<summary>Solution - Add the bindings</summary>
+
+```wgsl
 @group(0) @binding(0) var<storage, read> treeCoordinates: array<TreeCoordinates>;
 @group(0) @binding(1) var<storage, read> treeInfo: array<TreeInfo>;
 @group(0) @binding(2) var<uniform> u: Uniforms;
 ```
+</details>
+
+---
 
 Our vertex shader will read from these buffers and use their information to decide where to place vertices and which color to use. Once again, we will not use vertex buffers here.
 
 WebGPU, like other APIs, has **instanced rendering**. That allows us to draw one geometry several times with increased performance due to the reduced number of draw calls.
 
-We will **NOT** use instanced rendering here. Instead, we go even more hardcore and derive the index of our (fake) instance based on its **vertex index**. Additionally to UV coordinates, we also pass a color to the fragment shader.
+We will **NOT** use instanced rendering here. Instead, we go even more hardcore and derive the index of our (fake) instance based on its **vertex index**. Additionally to UV coordinates, we also pass a color to the fragment shader. The structs for the input and output are already given:
 
 ```wgsl
 struct VertexInput {
@@ -908,7 +928,14 @@ struct VertexOutput {
     @location(0) uv: vec2f,
     @location(1) color: vec4f,
 }
+```
 
+In this section you have to implement the `vertex` entry point. Derive the tree index from the vertex index and use it to place the quad at the tree's coordinates and color it by district.
+
+<details>
+<summary>Solution - Vertex Shader</summary>
+
+```wgsl
 @vertex
 fn vertex(input: VertexInput) -> VertexOutput {
     // I'm so cool
@@ -925,13 +952,7 @@ fn vertex(input: VertexInput) -> VertexOutput {
     let treeInfo = treeInfo[treeIndex];
 
     // Color based on tree district
-    // THIS IS BAD VISUALIZATION
-    // Ideally, the district number would be mapped into a qualitative color scheme
-    // See colorbrewer2.org for some good ones
-    let color23 = u.markerColor; // Color for Liesing
-    let color1 = vec4f(0, 0, 0, color23.a); // Color for Innere Stadt
-    let blendingFactor = f32(treeInfo.districtNumber - 1) / 22;
-    let color = mix(color1, color23, blendingFactor);
+    let color = vec4f(u32ToHashColor(treeInfo.districtNumber - 1), u.markerColor.a);
 
     return VertexOutput(
         vec4f(vertex, 0, 1),
@@ -940,14 +961,24 @@ fn vertex(input: VertexInput) -> VertexOutput {
     );
 }
 ```
+</details>
 
-And very little work is left for our fragment shader to do.
+---
+
+And very little work is left for our fragment shader to do. The output struct is already given:
 
 ```wgsl
 struct FragmentOutput {
     @location(0) color: vec4f,
 }
+```
 
+In this section you have to implement the `fragment` entry point and return the interpolated color.
+
+<details>
+<summary>Solution - Fragment Shader</summary>
+
+```wgsl
 @fragment
 fn fragment(input: VertexOutput) -> FragmentOutput {
     return FragmentOutput(
@@ -955,8 +986,14 @@ fn fragment(input: VertexOutput) -> FragmentOutput {
     );
 }
 ```
+</details>
 
-And now, back to Javascript, we create the uniforms buffer.
+### 4.3 Create and update the uniforms buffer
+
+And now, back to Javascript, we create the uniforms buffer. In this subtask you have to create the `this.uniforms` settings object and the uniform GPU buffer in the `initializeBuffers` function.
+
+<details>
+<summary>Solution - Create the uniforms buffer</summary>
 
 ```javascript
 async initializeBuffers() {
@@ -969,14 +1006,20 @@ async initializeBuffers() {
     };
     this.gpuUniforms = this.device.createBuffer({
         size: 1024, // Allocate 1024 bytes. Enough space for 256 floats/ints/uints (each is 4 bytes). That should be enough
-        // UNIFORM (of course) and COPT_DST so that we can later write to it
+        // UNIFORM (of course) and COPY_DST so that we can later write to it
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // Write to the uniforms buffer in render()
 }
 ```
+</details>
 
-Note that we do not write into the uniforms buffer immediately. That is because its data may change very often. Because of that, we will write to it every frame.
+---
+
+Note that we do not write into the uniforms buffer immediately. That is because its data may change very often. Because of that, we will write to it every frame. In this section you have to upload the current values at the beginning of `render` using `this.device.queue.writeBuffer` and a `Float32Array` whose layout matches the `Uniforms` struct in the shader.
+
+<details>
+<summary>Solution - Update the uniforms</summary>
 
 ```javascript
 async render() {
@@ -999,8 +1042,16 @@ async render() {
     ...
 }
 ```
+</details>
 
-Now that we have all the buffers set up, we can proceed to creating our **pipeline** and **bind group** for the new shaders.
+### 4.4 Create the markers pipeline and bind group
+
+Now that we have all the buffers set up, we can proceed to creating our **pipeline** and **bind group** for the new shaders. In this subtask you have to create the markers render pipeline in `initializePipelines` and the markers bind group in `initializeBindGroups`.
+
+First, for the pipeline. Because our markers are semi-transparent, we have to activate blending on the color target. Use `src-alpha` and `one-minus-src-alpha` for both the color and the alpha channel.
+
+<details>
+<summary>Solution - Create the markers pipeline</summary>
 
 ```javascript
 async initializePipelines() {
@@ -1018,12 +1069,34 @@ async initializePipelines() {
         fragment: {
             module: markersShaderModule,
             targets: [{
-                format: this.gpu.getPreferredCanvasFormat()
+                format: this.gpu.getPreferredCanvasFormat(),
+                blend: { // This activates blending!
+                    color: {
+                        operation: "add",
+                        srcFactor: "src-alpha",
+                        dstFactor: "one-minus-src-alpha",
+                    },
+                    alpha: {
+                        operation: "add",
+                        srcFactor: "src-alpha",
+                        dstFactor: "one-minus-src-alpha",
+                    }
+                }
             }]
         }
     });
 }
+```
+</details>
 
+---
+
+Then for the bind group:
+
+<details>
+<summary>Solution - Create the markers bind group</summary>
+
+```javascript
 async initializeBindGroups() {
     ...
     this.markersBindGroup = this.device.createBindGroup({
@@ -1036,8 +1109,14 @@ async initializeBindGroups() {
     });
 }
 ```
+</details>
 
-And now finally we can render the markers! We can render them immediately after the map, in the same render pass.
+### 4.5 Render the markers
+
+And now finally we can render the markers! We can render them immediately after the map, in the same render pass. In this subtask you have to set the markers pipeline and bind group after the map draw and draw one quad per tree (`6 * this.trees.getNumTrees()` vertices).
+
+<details>
+<summary>Solution - Render the markers</summary>
 
 ```javascript
 async render() {
@@ -1069,45 +1148,22 @@ async render() {
     this.device.queue.submit([commandBuffer]);
 }
 ```
+</details>
 
 And, with that, you should be able to finally see the tree markers on the screen!
 
-To load more trees, go back to where you load the date (`initializeBuffers()`) and pass a `true` to `loadTrees()`, like so:
+To load more trees, go back to where you load the data (`initializeBuffers()`) and pass a `true` to `loadTrees()`, like so:
 
 ```javascript
 this.trees = await LOADER.loadTrees(true); // Load 219,378 trees
 ```
 
-**BONUS 1/3!** Activate blending (i.e., transparency)
+### 4.6 Bonus - Add UI controls
 
-```javascript
-async initializePipelines() {
-    ...
-    this.markersRenderPipeline = this.device.createRenderPipeline({
-        ...
-        fragment: {
-            module: markersShaderModule,
-            targets: [{
-                format: this.gpu.getPreferredCanvasFormat(),
-                blend: { // This activates blending!
-                    color: {
-                        operation: "add",
-                        srcFactor: "src-alpha",
-                        dstFactor: "one-minus-src-alpha",
-                    },
-                    alpha: {
-                        operation: "add",
-                        srcFactor: "src-alpha",
-                        dstFactor: "one-minus-src-alpha",
-                    }
-                }
-            }]
-        }
-    });
-}
-```
+The marker settings are part of our uniforms, so we can also expose them in the GUI. Use the `onChange` callback to re-render whenever a value changes.
 
-**BONUS 2/3!** Add UI controls
+<details>
+<summary>Solution - Add UI controls</summary>
 
 ```javascript
 async initializeGUI() {
@@ -1120,28 +1176,7 @@ async initializeGUI() {
     .forEach((controller) => controller.onChange(onChange));
 }
 ```
-
-**BONUS 3/3!** Another (still bad) color scheme
-
-```wgsl
-fn toMarkerColor(districtIndex: u32) -> vec3<f32> {
-    // THIS IS STILL BAD VISUALIZATION
-    // Ideally, the district number would be mapped into a qualitative color scheme
-    // See colorbrewer2.org for some good ones
-
-    // This number changes the color scheme
-    let magicNumber = 555555u;
-    return unpack4x8unorm(((districtIndex % 127) + 1) * magicNumber).rgb;
-}
-
-@vertex
-fn vertex(input: VertexInput) -> VertexOutput {
-    ...
-    // Color based on tree district
-    let color = vec4f(toMarkerColor(treeInfo.districtNumber - 1), u.markerColor.a);
-    ....
-}
-```
+</details>
 
 And so we're done! Your map should have markers, just like the one in the screenshot below.
 

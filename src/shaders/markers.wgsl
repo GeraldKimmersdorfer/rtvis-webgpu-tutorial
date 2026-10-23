@@ -24,4 +24,10 @@ fn latLonToXY(lat: f32, lon: f32) -> vec2f {
         );
 }
 
+fn u32ToHashColor(districtIndex: u32) -> vec3f {
+    // This number changes the color scheme
+    let magicNumber = 888888u;
+    return unpack4x8unorm(((districtIndex % 127) + 1) * magicNumber).rgb;
+}
+
 // Your code here :)
