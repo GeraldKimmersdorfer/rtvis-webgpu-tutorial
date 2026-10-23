@@ -518,7 +518,7 @@ async render() {
 
 If you've done everything correctly up to this point, the result in the console should now look like this (you might need to refresh the page):
 
-![Result of the aggregation performed in task 2](images/task2_1.png)
+![Result of the aggregation performed in task 2](images/task2_1.jpg)
 
 ### 2.6 Lets visualize it
 First: Lets go big by now loading the whole dataset with its ~200.000 trees. For this you only need to add a `true` to the parameter set of the `loadTrees`-function in `initializeBuffers`.
@@ -570,11 +570,11 @@ So lets dive even deeper, learn about Rendering Pipelines and how to visualize 2
 
 Duration: 10 minutes
 
-<img src="data/vienna-satellite.png" alt="A map of Vienna, the result of task 3" height="500">
+![All possible background images which we'll render in Task 3](images/task3_teaser.jpg)
 
-Finally we will render something on the screen. In this case, it will be just a simple texture.
+To draw our geographical data we need some kind of geographical/visual context. Whats better for that purpose than a map of vienna? Therefore in this short task we'll get to know the webGPU Rendering Pipeline by the task of drawing a little background map ontop of the canvas.
 
-The first step is to load our map data, which includes four images of Vienna: satellite, streets, outdoors, and height
+The first step is to load our map data, which includes four images of Vienna: satellite, streets, outdoors, and height. We provide an appropriate function inside the LOADER class called `LOADER.loadMap()`.
 
 ```javascript
 async initializeTextures() {
@@ -828,17 +828,17 @@ async render() {
 
 ---
 
-And, finally, you should see a map of Vienna on your screen.
+And if you've implemented everything correctly up until this point you should see a map of Vienna on your screen.
 
-<img src="data/vienna-outdoors.png" alt="A map of Vienna, the result of task 3" height="500">
+![Expected Output after the implementation of Task 3](images/task3.jpg)
 
 ## Task 4 - Render Trees as Markers
 
 Duration: 20 minutes
 
-<img src="images/task4.png" alt="A map of Vienna with one semi-transparent square marker per tree, the result of task 4" height="500">
+![Teaser image for how the result of Task 4 could look like](images/task4_teaser.jpg)
 
-Finally, in this task, we will get to render our tree data. 
+Finally, lets draw those trees. In this task we'll setup a rendering pipeline which draws individual rectangles for each tree. Given the rectangle size we expect a lot of overlap. We'll shade the rectangles with an adjustable alpha to easily identify areas with a dense/larger tree count.
 
 Previously, we had loaded the tree information. Now, in addition to that, we also load the coordinates of the trees.
 
@@ -862,11 +862,9 @@ async initializeBuffers() {
 ```
 </details>
 
-With this data now available, we move on to this task's shaders.
+### 4.2 Write the shader
 
-### 4.2 Write the marker shaders
-
-Open `src/shaders/markers.wgsl`.
+Open [`src/shaders/markers.wgsl`](src/shaders/markers.wgsl).
 
 Our vertices and UVs are there again, together with the function `latLonToXY`, that converts latitude and longitude coordinates into XY coordinates in the range [0,1]. In addition, `u32ToHashColor` is already provided. It hashes a district number into a color.
 
@@ -951,8 +949,8 @@ fn vertex(input: VertexInput) -> VertexOutput {
     // Get tree info
     let treeInfo = treeInfo[treeIndex];
 
-    // Color based on tree district
-    let color = vec4f(u32ToHashColor(treeInfo.districtNumber - 1), u.markerColor.a);
+    // Color based on tree district multiplied with marker color
+    let color = vec4f(u32ToHashColor(treeInfo.districtNumber) * u.markerColor.rgb, u.markerColor.a);
 
     return VertexOutput(
         vec4f(vertex, 0, 1),
@@ -1001,7 +999,7 @@ async initializeBuffers() {
     // Uniforms
     this.uniforms = {
         markerSize: 0.01,
-        markerColor: [255, 0, 0], // The screenshots use [117, 107, 177]
+        markerColor: [1, 1, 1],
         markerAlpha: 0.01,
     };
     this.gpuUniforms = this.device.createBuffer({
@@ -1034,9 +1032,9 @@ async render() {
         this.map.longitude.max,
         this.uniforms.markerSize,
         0, // Unused
-        this.uniforms.markerColor[0] / 255,
-        this.uniforms.markerColor[1] / 255,
-        this.uniforms.markerColor[2] / 255,
+        this.uniforms.markerColor[0],
+        this.uniforms.markerColor[1],
+        this.uniforms.markerColor[2],
         this.uniforms.markerAlpha,
     ]));
     ...
@@ -1180,9 +1178,10 @@ async initializeGUI() {
 
 ---
 
-And so we're done! Your map should have square markers, just like the one in the screenshot below.
+And so we're done! Your map should have square blurry looking markers, just like the one in the screenshot below.
 
-<img src="images/task4.png" alt="A map of Vienna with one semi-transparent square marker per tree, the result of task 4" height="500">
+![Expected Output after the implementation of Task 3](images/task4.jpg)
+
 
 ## Bonus Task - Compute and Render Heatmap
 
