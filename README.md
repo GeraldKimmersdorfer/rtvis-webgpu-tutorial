@@ -1183,21 +1183,36 @@ And so we're done! Your map should have square blurry looking markers, just like
 ![Expected Output after the implementation of Task 3](images/task4.jpg)
 
 
-## Bonus Task - Compute and Render Heatmap
+## Task 5 - Heatmap (BONUS TASK)
 
 Duration: 30 minutes
 
-<img src="images/task5.png" alt="A map of Vienna an overlaid heatmap of tree frequency, the result of task 5" height="500">
+![Teaser image for how the result of Task 5 could look like](images/task5_teaser.jpg)
 
 For the final task, we will combine compute and render passes to produce a heatmap that we display over the map of Vienna.
 
 This will require the compute shader to go through each tree, find out in which cell of our heatmap grid it is contained, and then increment the cell's count by one. When rendering the grid cells, this value must then be mapped to a color. To do that, we must also find out what is the largest value stored among all grid cells.
 
-Open `src/shaders/heatmapCompute.wgsl`.
+> [!Note]
+> As already mentioned earlier: This is only an example on how to combine compute and rendering-pipelines. There are good libraries for visualizing a heatmap out there that support interactivity from the start. (e.g. [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat), [deck.gl](https://deck.gl/docs/api-reference/aggregation-layers/heatmap-layer),...) 
+>
+> Reinventing the wheel like this only makes sense for the sake of learning something new.
+> 
+> That being said: Have fun with the last part of the tutorial
+
+
+
+
+
+### 5.1 Write the heatmap compute shader
+
+Open [`src/shaders/heatmapCompute.wgsl`](src/shaders/heatmapCompute.wgsl).
 
 You will find the definitions of two functions. We already know `latLonToXY`. The other function, `xyToCellIndex`, converts the XY coordinate of a tree into the index of a cell in our grid.
 
 We start, as per usual, by defining our buffers. We introduce one buffer that stores all the cells in the grid (`array<Cell>`), and one buffer that stores the aggregate values across the grid (`Grid`). We also add two new values to our uniforms: the width and height of the grid.
+
+The structs are already given:
 
 ```wgsl
 struct TreeCoordinates {
@@ -1235,17 +1250,30 @@ struct Uniforms {
     gridWidth: f32, // Number of cells on the grid's width
     gridHeight: f32, // Number of cells on the grid's height
 }
+```
 
+Now you have to add the five buffer bindings to `src/shaders/heatmapCompute.wgsl`. Bind the tree coordinates at `@group(0) @binding(0)` and the tree info at `@group(0) @binding(1)`, the cells at `@group(0) @binding(2)` and the grid at `@group(0) @binding(3)`. The uniforms go to `@group(0) @binding(4)`.
+
+<details>
+<summary>Solution - Add the bindings</summary>
+
+```wgsl
 @group(0) @binding(0) var<storage, read> treeCoordinates: array<TreeCoordinates>;
 @group(0) @binding(1) var<storage, read> treeInfo: array<TreeInfo>;
 @group(0) @binding(2) var<storage, read_write> cells: array<Cell>;
 @group(0) @binding(3) var<storage, read_write> grid: Grid;
 @group(0) @binding(4) var<uniform> u: Uniforms;
 ```
+</details>
+
+---
 
 In this shader, we will introduce **three entry points**. One (called `count`) will be responsible to go through each tree and accumulate values on the grid cells (such as tree count). The second one (called `max`) will be responsible for going through each grid cell and finding the largest tree count. The third one (called `clear`) will reset the grid values and prepare it for the next pass (set all counts and the max value to zero).
 
-First, we add the `count` entry point, which is very similar to the `add` shader we wrote in Task 1.
+Lets start of with the `count` function, which is very similar to the `aggregate` shader we wrote in Task 2. You have to convert the tree's latitude and longitude to XY coordinates with the provided `latLonToXY()`, convert those to a cell index with `xyToCellIndex()`, and then increment the tree count of that cell using `atomicAdd`.
+
+<details>
+<summary>Solution - Count the trees per cell</summary>
 
 ```wgsl
 @compute @workgroup_size(64)
@@ -1268,8 +1296,14 @@ fn count(@builtin(global_invocation_id) globalId: vec3u) {
     atomicAdd(&cells[cellIndex].treeCount, 1);
 }
 ```
+</details>
 
-Then, we add the `max` entry point.
+---
+
+Then, we add the `max` function. Load the cell's tree count with `atomicLoad` and update `grid.maxTreeCount` with `atomicMax`, so that it holds the largest count of all cells.
+
+<details>
+<summary>Solution - Find the maximum tree count</summary>
 
 ```wgsl
 @compute @workgroup_size(64)
@@ -1285,8 +1319,14 @@ fn max(@builtin(global_invocation_id) globalId: vec3u) {
     atomicMax(&grid.maxTreeCount, treeCount);
 }
 ```
+</details>
 
-And, finally, the `clear` entry point.
+---
+
+And last but not least the `clear` entry point. This function is supposed to reset `grid.maxTreeCount` to zero (make sure only one thread does this) and reset every cell's `treeCount` to zero with `atomicStore`.
+
+<details>
+<summary>Solution - Clear the grid</summary>
 
 ```wgsl
 @compute @workgroup_size(64)
@@ -1306,8 +1346,18 @@ fn clear(@builtin(global_invocation_id) globalId: vec3u) {
     atomicStore(&cells[cellIndex].treeCount, 0);
 }
 ```
+</details>
 
-Now having completed our compute shader, before we move on to the vertex and fragment shaders, we go back to Javascript and create the new buffers we introduced.
+
+
+### 5.2 Create the heatmap buffers and uniforms
+
+Now having completed our compute shader, before we move on to the vertex and fragment shaders, we [go back to Javascript](src/tutorial.js) and create the new buffers we introduced.
+
+In this subtask you have to store the maximum grid size in `this.GRID_MAX_WIDTH` and `this.GRID_MAX_HEIGHT` (set to `200`). Use it to create a storage buffer in `this.gpuGridCells` that is large enough for one `u32` per possible cell.Additionally create the storage buffer `this.gpuGrid`, which holds a single `u32` for the maximum tree count. Add the implementation to the `initializeBuffers` function.
+
+<details>
+<summary>Solution - Create the heatmap buffers</summary>
 
 ```javascript
 async initializeBuffers() {
@@ -1329,8 +1379,14 @@ async initializeBuffers() {
     });
 }
 ```
+</details>
 
-Because we now introduced two new uniforms, we also set them up.
+---
+
+Because we now introduced two new uniforms, we also have to set them up. Add `gridWidth` and `gridHeight` (both `50` for now - we'll make them adjustable lateron) to the `this.uniforms` object in `initializeBuffers`. The order must match the `Uniforms` struct in the shader.
+
+<details>
+<summary>Solution - Set up the grid uniforms</summary>
 
 ```javascript
 async initializeBuffers() {
@@ -1352,8 +1408,16 @@ async render() {
     ...
 }
 ```
+</details>
+
+### 5.3 Create the compute layouts, pipelines and bind group
 
 Now, for the creation of the **pipeline** and **bind group** of our shaders. Because we have three entry points in our shader, we will need **three pipelines** that use the same **bind group**. So far, we've been using the pipeline's `"auto"` layout, and its `getBindGroupLayout()` function. However, in order to share the **bind group** among **pipelines**, we now need to create this layout manually.
+
+Create the bind group layout in `initializeLayouts` with `this.device.createBindGroupLayout`. It needs five entries, corresponding to the shader code. Store it in `this.heatmapComputeBindGroupLayout`, then create a pipeline layout with `this.device.createPipelineLayout` that uses it and store it in `this.heatmapComputePipelineLayout`.
+
+<details>
+<summary>Solution - Create the bind group and pipeline layout</summary>
 
 ```javascript
 async initializeLayouts() {
@@ -1374,8 +1438,16 @@ async initializeLayouts() {
     });
 }
 ```
+</details>
 
-With the layouts created, we can then create the **pipelines** and the **bind group** as per usual
+---
+
+With the layouts created, we can then create the **pipelines** and the **bind group** as per usual. For that you have to create one shader module from `SHADERS.heatmapCompute` with the label `heatmapCompute`, and three compute pipelines in `initializePipelines`: `heatmapComputeClearPipeline`, `heatmapComputeCountPipeline` and `heatmapComputeMaxPipeline`. All three use `this.heatmapComputePipelineLayout` and the same module, but differ in their entry points
+
+First, for the pipelines:
+
+<details>
+<summary>Solution - Create the compute pipelines</summary>
 
 ```javascript
 async initializePipelines() {
@@ -1398,7 +1470,17 @@ async initializePipelines() {
         compute: { module: heatmapShaderModule, entryPoint: "max" },
     });
 }
+```
+</details>
 
+---
+
+Then for the bind group:
+
+<details>
+<summary>Solution - Create the compute bind group</summary>
+
+```javascript
 async initializeBindGroups() {
     ...
     this.heatmapComputeBindGroup = this.device.createBindGroup({
@@ -1413,8 +1495,16 @@ async initializeBindGroups() {
     });
 }
 ```
+</details>
+
+### 5.4 Dispatch the compute passes
 
 We now add our new pipelines to a compute pass before rendering. We won't be able to see any result yet, but this will allow us to verify if our pipelines are set up correctly and there are no errors.
+
+In this section you have to open a compute pass in the `render` function and set `this.heatmapComputeBindGroup` once, since all three pipelines share it. Calculate the number of workgroups from the number of trees and from `this.uniforms.gridWidth * this.uniforms.gridHeight`; don't forget that we spawn 64 threads per workgroup. Dispatch `heatmapComputeClearPipeline` first (one thread per cell), then `heatmapComputeCountPipeline` (one thread per tree) and finally `heatmapComputeMaxPipeline` (one thread per cell).
+
+<details>
+<summary>Solution - Dispatch the compute passes</summary>
 
 ```javascript
 async render() {
@@ -1453,14 +1543,19 @@ async render() {
     this.device.queue.submit([commandBuffer]);
 }
 ```
+</details>
+
+---
 
 Now that we're done with the computation of the heatmap, we move on to displaying it.
 
-Open `src/shaders/heatmapRender.wgsl`;
+### 5.5 Write the heatmap render shader
+
+Open [`src/shaders/heatmapRender.wgsl`](src/shaders/heatmapRender.wgsl).
 
 You will find the familiar vertices and UVs we saw before. That is because we are using the exact same technique we used to render the tree markers, where each grid cell will be rendered as a quad.
 
-First, we introduce the buffer bindings.
+First, we introduce the buffer bindings. The structs are already given:
 
 ```wgsl
 struct Cell {
@@ -1484,15 +1579,25 @@ struct Uniforms {
     gridWidth: f32,
     gridHeight: f32,
 }
+```
 
+In this section you have to bind the cells at `@group(0) @binding(0)` and the grid at `@group(0) @binding(1)` as `read` storage buffers, and the uniforms at `@group(0) @binding(2)` as an uniform buffer.
+
+<details>
+<summary>Solution - Add the bindings</summary>
+
+```wgsl
 @group(0) @binding(0) var<storage, read> cells: array<Cell>;
 @group(0) @binding(1) var<storage, read> grid: Grid;
 @group(0) @binding(2) var<uniform> u: Uniforms;
 ```
+</details>
+
+---
 
 We have already discussed and created all buffers introduced here.
 
-Next, we add the vertex shader.
+Next, we add the vertex shader. The structs for the input and output are already given:
 
 ```wgsl
 struct VertexInput {
@@ -1504,7 +1609,15 @@ struct VertexOutput {
     @location(0) uv: vec2f,
     @location(1) color: vec4f,
 }
+```
 
+
+In this section you have to implement the `vertex` entry point. Derive the cell index from the vertex index (`/ 6`), calculate the center of the cell in the range `[-1, 1]` from the grid dimensions, scale the quad by the size of one cell (`1 / gridWidth` and `1 / gridHeight`) and offset it by the cell's center. For now, assign an arbitrary color; we will calculate it from the tree count later.
+
+<details>
+<summary>Solution - Vertex Shader</summary>
+
+```wgsl
 @vertex
 fn vertex(input: VertexInput) -> VertexOutput {
     let cellIndex = input.vertexIndex / 6;
@@ -1531,16 +1644,27 @@ fn vertex(input: VertexInput) -> VertexOutput {
     );
 }
 ```
+</details>
 
-Note that we are assigning an arbitrary color to each grid cell. Later, we will calculate it based on its tree count. For now, for debug purposes, we keep it like this.
+---
 
-Once again, the fragment shader doesn't do much.
+> [!NOTE]
+> We are assigning an arbitrary color to each grid cell. Later, we will calculate it based on its tree count. For now, for debug purposes, we keep it like this.
+
+Once again, the fragment shader doesn't do much. The output struct is already given:
 
 ```wgsl
 struct FragmentOutput {
     @location(0) color: vec4f,
 }
+```
 
+In this section you have to implement the `fragment` entry point and return the interpolated color.
+
+<details>
+<summary>Solution - Fragment Shader</summary>
+
+```wgsl
 @fragment
 fn fragment(input: VertexOutput) -> FragmentOutput {
     return FragmentOutput(
@@ -1548,8 +1672,16 @@ fn fragment(input: VertexOutput) -> FragmentOutput {
     );
 }
 ```
+</details>
 
-With the shader created, we go back to Javascript and introduce our new **pipeline** and **bind group**.
+### 5.6 Create the heatmap render pipeline and bind group
+
+With the shader created, we go back to Javascript and introduce our new **pipeline** and **bind group**. Create `this.heatmapRenderPipeline` in `initializePipelines` with `layout: "auto"` and the same blending as the markers (`src-alpha` / `one-minus-src-alpha`). Then `this.heatmapRenderBindGroup` in `initializeBindGroups`. Since the shader does not use the cells and grid yet, they are optimized out of the automatic layout - for now only bind the uniforms at binding 2. We will add the other two bindings once the shader uses them.
+
+First, for the pipeline:
+
+<details>
+<summary>Solution - Create the heatmap render pipeline</summary>
 
 ```javascript
 async initializePipelines() {
@@ -1576,7 +1708,17 @@ async initializePipelines() {
         }
     });
 }
+```
+</details>
 
+---
+
+Then for the bind group:
+
+<details>
+<summary>Solution - Create the heatmap render bind group</summary>
+
+```javascript
 async initializeBindGroups() {
     ...
     this.heatmapRenderBindGroup = this.device.createBindGroup({
@@ -1590,8 +1732,14 @@ async initializeBindGroups() {
     });
 }
 ```
+</details>
 
-Now we render the heatmap to see if we did everything right so far.
+### 5.7 Render the heatmap
+
+Now we render the heatmap to see if we did everything right so far. In this section you have to add the heatmap to the render pass. Draw it immediately after the map with `6 * this.uniforms.gridWidth * this.uniforms.gridHeight` vertices, so that one quad is drawn per grid cell. Temporarily deactivate the markers by commenting them out.
+
+<details>
+<summary>Solution - Render the heatmap</summary>
 
 ```javascript
     async render() {
@@ -1633,10 +1781,20 @@ Now we render the heatmap to see if we did everything right so far.
         this.device.queue.submit([commandBuffer]);
     }
 ```
+</details>
 
-You should now see a a red gradient over the map.
+---
 
-Uncomment our buffer bindings.
+You should now see a red gradient over the map.
+
+![Red gradient over the map. Result after 5.7](images/task5_6.jpg)
+
+### 5.8 Color the cells by tree count
+
+Uncomment our buffer bindings. In this section you have to add `this.gpuGridCells` and `this.gpuGrid` to `this.heatmapRenderBindGroup` at bindings 0 and 1. Since the shader now uses them, they are part of the automatic layout.
+
+<details>
+<summary>Solution - Bind the cells and grid</summary>
 
 ```javascript
 async initializeBindGroups() {
@@ -1651,10 +1809,16 @@ async initializeBindGroups() {
     });
 }
 ```
+</details>
+
+---
 
 Open `src/shaders/heatmapRender.wgsl`.
 
-Remove the `// Dummy value for now` section and instead calculate a color value based on the tree count.
+Remove the `// Dummy value for now` section and instead calculate a color value based on the tree count. In this section you have to read the maximum tree count from `grid.maxTreeCount` and the cell's count from `cells[cellIndex].treeCount`, compute a blending factor between 0 and 1 and `mix` between a faint and the full marker color (`u.markerColor`). Cells with a tree count of zero should be fully transparent.
+
+<details>
+<summary>Solution - Color by tree count</summary>
 
 ```wgsl
 // Map color based on tree count
@@ -1674,10 +1838,14 @@ if count == 0 {
     color.a = 0;
 }
 ```
+</details>
 
-And finally, the heatmap is done!
+### 5.9 Add UI controls
 
-**BONUS!** Add UI controls
+It is tedious to change the grid resolution in the code every time. In this section you have to add two sliders to the GUI in `initializeGUI`: one for `gridWidth` (from 1 to `this.GRID_MAX_WIDTH`, step 1) and one for `gridHeight` (from 1 to `this.GRID_MAX_HEIGHT`, step 1). Use a shared `onChange` callback that calls `this.render()`.
+
+<details>
+<summary>Solution - Add UI controls</summary>
 
 ```javascript
 async initializeGUI() {
@@ -1689,8 +1857,10 @@ async initializeGUI() {
     .forEach((controller) => controller.onChange(onChange));
 }
 ```
+</details>
 
-<img src="images/task5.png" alt="A map of Vienna an overlaid heatmap of tree frequency, the result of task 5" height="500">
+---
+![We did it! A heatmap of tree counts over vienna](images/task5.jpg)
 
 ## Congrats!
 
