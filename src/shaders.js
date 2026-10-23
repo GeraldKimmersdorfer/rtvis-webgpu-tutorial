@@ -7,7 +7,7 @@ async function fetchTextFile(url) {
     return await response.text();
 }
 
-const [add, aggregate, image, markers, heatmapCompute, heatmapRender] = await Promise.all([
+const [aggregate, image, markers, heatmapCompute, heatmapRender] = await Promise.all([
     fetchTextFile("./shaders/aggregate.wgsl"),
     fetchTextFile("./shaders/image.wgsl"),
     fetchTextFile("./shaders/markers.wgsl"),
