@@ -363,8 +363,7 @@ You should now see the values of the array printed on the console. Each value sh
 
 Duration: 15 minutes
 
-We start by loading some real data. The data we use here is from the [
-Baumkataster bzw. Bäume Standorte Wien](https://www.data.gv.at/katalog/dataset/c91a4635-8b7d-43fe-9b27-d95dec8392a7), a dataset of trees in Vienna.
+We start by loading some real data. The data we use here is from the [Baumkataster bzw. Bäume Standorte Wien](https://www.data.gv.at/katalog/dataset/c91a4635-8b7d-43fe-9b27-d95dec8392a7), a dataset of trees in Vienna.
 
 The data can be conveniently loaded with the provided `LOADER`.
 We use this to load information per tree in a single list, in the format 
@@ -557,15 +556,15 @@ If you've done everything correctly, you should now see a simplified shape of Vi
 
 
 > [!IMPORTANT]
-> **This is an important Take-Away!** Even though WebGPU also has rendering capabilities - in a lot of cases we are better off to only do the data processing on the GPU and visualize the result without WebGPU.
+> **This is an important Take-Away!** Even though WebGPU also has rendering capabilities - in a lot of cases we are better off to only do the data processing on the GPU and visualize the result without WebGPU. (especially interactivity can be quite tricky)
 >
-> There are tons of frameworks for data visualization (e.g. [D3.js](https://d3js.org/), [Chart.js](https://www.chartjs.org/), [Plotly.js](https://plotly.com/javascript/), [Apache ECharts](https://echarts.apache.org/), [Highcharts](https://www.highcharts.com/), [Recharts](https://recharts.org/), [Vega-Lite](https://vega.github.io/vega-lite/), ...). For geographic data there are even more specialized frameworks like [Leaflet](https://leafletjs.com/), [Mapbox GL JS](https://docs.mapbox.com/mapbox-gl-js/api/), [MapLibre GL JS](https://maplibre.org/maplibre-gl-js/docs/), [OpenLayers](https://openlayers.org/), [deck.gl](https://deck.gl/), [CesiumJS](https://cesium.com/platform/cesiumjs/), ...
+> There are tons of frameworks for data visualization on the web (e.g. [D3.js](https://d3js.org/), [Chart.js](https://www.chartjs.org/), [Plotly.js](https://plotly.com/javascript/), [Apache ECharts](https://echarts.apache.org/), [Highcharts](https://www.highcharts.com/), [Recharts](https://recharts.org/), [Vega-Lite](https://vega.github.io/vega-lite/), ...). For geographic data there are even more specialized frameworks like [Leaflet](https://leafletjs.com/), [Mapbox GL JS](https://docs.mapbox.com/mapbox-gl-js/api/), [MapLibre GL JS](https://maplibre.org/maplibre-gl-js/docs/), [OpenLayers](https://openlayers.org/), [deck.gl](https://deck.gl/), [CesiumJS](https://cesium.com/platform/cesiumjs/), ...
 >
 > Don't reinvent the wheel ;)
 
-But lets assume we want to visualize the trees themselves. Having ~200k DOM elements may not be a good idea. Even though it might still be possible you will run into performance issues eventually. Instead we will render the trees on a canvas using WebGPU. 
+But lets assume we want to visualize the trees themselves. Having ~200k DOM elements may not be a good idea - especially with interactivity or animation. (see [here](https://tommykrueger.com/projects/d3tests/performance-test.php)) Even though it might still be possible you will run into performance issues eventually. Instead we will render the trees on a canvas using WebGPU. 
 
-So lets dive even deeper, learn about Rendering Pipelines and how to visualize 200.000 data points (or even much much more) with ease.
+So lets dive even deeper, learn about Rendering Pipelines and how to visualize 200.000 data points (or even much much more) in real-time.
 
 ## Task 3 - Render an Image
 
@@ -585,6 +584,13 @@ async initializeTextures() {
 
 The images contained in map are ready to be used with WebGPU. So we can jump straight into creating our texture.
 
+### 3.1 Initialize the texture and canvas
+
+In this subtask you have to upload one of the loaded images (e.g. `this.map.images.outdoors`) to the GPU. Use `this.device.createTexture` to create a texture with the image dimensions and the `rgba8unorm` format and store it in `this.gpuMapTexture`. `TEXTURE_BINDING` is needed to bind the texture to the pipeline; because we also copy the image into it, `COPY_DST` and `RENDER_ATTACHMENT` are needed as well. Afterwards use `this.device.queue.copyExternalImageToTexture` to copy the image into the texture.
+
+<details>
+<summary>Solution - Create the map texture</summary>
+
 ```javascript
 async initializeTextures() {
     ...
@@ -603,8 +609,14 @@ async initializeTextures() {
     );
 }
 ```
+</details>
 
-To finalize the initialization of our texture, we also create a sampler. It is through the sampler that we access the texture in the shaders.
+---
+
+A sampler allows us to access a texture in the shader. It deals with interpolation. You have to create the sampler with a linear magnification and minification filter and store it in `this.sampler`.
+
+<details>
+<summary>Solution - Create the sampler</summary>
 
 ```javascript
 async initializeTextures() {
@@ -615,35 +627,55 @@ async initializeTextures() {
     });
 }
 ```
+</details>
 
-Finally, we need to set the render size of the canvas to our image dimensions. This avoids sampling artifacts on the map and lets the browser do the work of downsampling our render output to the actual canvas (css) size.
+---
+
+We already created a canvas-object for you which is stored in `this.canvas`. Per default it's hidden though. You will have to display it again by setting its `display` style to `block`. Additionally you should set the `width` and `height` of the canvas to the image dimensions.
+
+<details>
+<summary>Solution - Show the canvas</summary>
+
 ```javascript
 async initializeTextures() {
     ...
+    this.canvas.style.display = "block";
     // Set canvas render size to image dimension
     this.canvas.width = image.width;
     this.canvas.height = image.height;
 }
 ```
+</details>
+
+### 3.2 Write the image shaders
 
 With the texture data set up on the GPU, we begin the process of showing it on the screen. For this tutorial, we will write one vertex shader and one fragment shader, and we will render a quad (two triangles forming a rectangle).
 
 For loading large 3D models, it can be beneficial to create a **vertex buffer**, which is used to feed data into our vertex shader.
 
-Since we only render one quad (6 triangles with `triangle-list`), we hard-code the vertex and UV positions in the shader.
+Since we only render one quad (6 vertices forming two triangles with `triangle-list`), we hard-code the vertex and UV positions in the shader.
 
-Open `src/shaders/image.wgsl`.
+Open [`image.wgsl`](src/shaders/image.wgsl).
 
-This time, you will find only the definitions of our vertices and UVs.
+This time, you will find only the definitions of our vertices and UVs. In this subtask you have to add the bindings, the vertex shader and the fragment shader.
 
-We begin by adding our bindings.
+We begin by adding our bindings. Use `@group(0) @binding(0)` for the texture and `@group(0) @binding(1)` for the sampler.
+
+<details>
+<summary>Solution - Add the texture bindings</summary>
 
 ```wgsl
 @group(0) @binding(0) var texture: texture_2d<f32>;
 @group(0) @binding(1) var linearSampler: sampler;
 ```
+</details>
+
+---
 
 Next, we define the vertex shader. Other graphics APIs provide global variables to manage access to the inputs and outputs of shaders (e.g., OpenGL with `gl_VertexID` or `gl_FragColor`). In WebGPU, the inputs and outputs are explicitly defined and are available as arguments in our entry point function.
+
+<details>
+<summary>Solution - Vertex Shader</summary>
 
 ```wgsl
 struct VertexInput {
@@ -665,8 +697,14 @@ fn vertex(input: VertexInput) -> VertexOutput {
     );
 }
 ```
+</details>
 
-In the fragment shader, we then use our sampler to sample the texture.
+---
+
+In the fragment shader, we then use our sampler to sample the texture. Use the wsl-function `textureSample` to do so.
+
+<details>
+<summary>Solution - Fragment Shader</summary>
 
 ```wgsl
 // The fragment input comes from the vertex shader's output (VertexOutput)
@@ -681,10 +719,16 @@ fn fragment(input: VertexOutput) -> FragmentOutput {
     return FragmentOutput(color);
 }
 ```
+</details>
 
-Like previously, we must still create a **pipeline** and **bind group**.
+### 3.3 Create the pipeline and bind group
+
+Like previously, we must still create a **pipeline** and **bind group**. In this subtask you have to create the render pipeline in the `initializePipelines` function and the bind group in the `initializeBindGroups` function.
 
 First, for the pipeline:
+
+<details>
+<summary>Solution - Create the render pipeline</summary>
 
 ```javascript
 async initializePipelines() {
@@ -710,8 +754,14 @@ async initializePipelines() {
     });
 }
 ```
+</details>
+
+---
 
 Then for the bind group:
+
+<details>
+<summary>Solution - Create the image bind group</summary>
 
 ```javascript
 async initializeBindGroups() {
@@ -724,8 +774,14 @@ async initializeBindGroups() {
     });
 }
 ```
+</details>
 
-There is one last step before rendering: setting up the HTML canvas. That is done analogously to WebGL (where we use `canvas.getContext("webgl)`), followed by a configuration of the context:
+### 3.4 Configure the canvas context
+
+There is one last step before rendering: setting up the HTML canvas. That is done analogously to WebGL (where we use `canvas.getContext("webgl)`), followed by a configuration of the context. In this subtask you have to get the WebGPU context of the canvas and configure it with our `device` and the preferred canvas format. Add the implementation to the `initializeWebGPU` function.
+
+<details>
+<summary>Solution - Configure the canvas context</summary>
 
 ```javascript
 async initializeWebGPU() {
@@ -737,9 +793,15 @@ async initializeWebGPU() {
     });
 }
 ```
+</details>
+
+### 3.5 Render the quad
 
 And finally, we can encode our commands into a buffer and submit it to the GPU!
-The **color attachment** of the render pass describes how the output behaves.
+The **color attachment** of the render pass describes how the output behaves. In this subtask you have to begin a render pass whose color attachment clears the canvas, set our pipeline and bind group, and draw the 6 vertices of our quad. Add the implementation to the `render` function, after the compute pass.
+
+<details>
+<summary>Solution - Render the quad</summary>
 
 ```javascript
 async render() {
@@ -762,6 +824,9 @@ async render() {
     this.device.queue.submit([commandBuffer]);
 }
 ```
+</details>
+
+---
 
 And, finally, you should see a map of Vienna on your screen.
 
