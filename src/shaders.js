@@ -8,7 +8,6 @@ async function fetchTextFile(url) {
 }
 
 const [add, aggregate, image, markers, heatmapCompute, heatmapRender] = await Promise.all([
-    fetchTextFile("./shaders/add.wgsl"),
     fetchTextFile("./shaders/aggregate.wgsl"),
     fetchTextFile("./shaders/image.wgsl"),
     fetchTextFile("./shaders/markers.wgsl"),
@@ -18,7 +17,6 @@ const [add, aggregate, image, markers, heatmapCompute, heatmapRender] = await Pr
 // This should use text imports once those are stable
 // https://github.com/whatwg/html/issues/9444
 export const SHADERS = {
-    add,
     aggregate,
     image,
     markers,
