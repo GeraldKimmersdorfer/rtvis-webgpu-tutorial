@@ -1158,9 +1158,9 @@ To load more trees, go back to where you load the data (`initializeBuffers()`) a
 this.trees = await LOADER.loadTrees(true); // Load 219,378 trees
 ```
 
-### 4.6 Bonus - Add UI controls
+### 4.6 UI controls
 
-The marker settings are part of our uniforms, so we can also expose them in the GUI. Use the `onChange` callback to re-render whenever a value changes.
+It would be nice to be able to adjust the marker size, color tint and opacity in real time. To that end we we already included the [Lil-Gui](https://lil-gui.georgealways.com/) library. The marker settings are part of our uniforms, so we can also expose them in the GUI. Use the `onChange` callback to re-render whenever a value changes. Add the code for the HUD inside `initializeGUI()`
 
 <details>
 <summary>Solution - Add UI controls</summary>
@@ -1178,7 +1178,9 @@ async initializeGUI() {
 ```
 </details>
 
-And so we're done! Your map should have markers, just like the one in the screenshot below.
+---
+
+And so we're done! Your map should have square markers, just like the one in the screenshot below.
 
 <img src="images/task4.png" alt="A map of Vienna with one semi-transparent square marker per tree, the result of task 4" height="500">
 
